@@ -1,0 +1,110 @@
+name: publish-crate
+
+on:
+  push:
+    tags: ["v*"]
+
+concurrency:
+  group: publish-crate
+  cancel-in-progress: false
+
+env:
+  PACKAGE: markdown_tools
+  MARGO_VERSION: "0.1.7"
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Resolve the package and verify the tag
+        id: pkg
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 \
+            | jq -er --arg package "$PACKAGE" \
+              '.packages | map(select(.name == $package))
+               | if length == 1 then .[0].version else error("package selection is not unique") end')"
+          if [ "v${version}" != "${GITHUB_REF_NAME}" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} != ${PACKAGE} ${version}"
+            exit 1
+          fi
+          printf 'version=%s\n' "$version" >> "$GITHUB_OUTPUT"
+
+      - name: Validate and package
+        run: |
+          cargo fmt --check
+          cargo clippy --locked -p "$PACKAGE" --all-targets --all-features -- -D warnings
+          cargo test   --locked -p "$PACKAGE" --all-targets --all-features
+          cargo package --locked -p "$PACKAGE" --list
+          cargo package --locked -p "$PACKAGE"
+
+      - name: Check out the registry
+        uses: actions/checkout@v6
+        with:
+          repository: <org>/crates
+          token: ${{ secrets.CRATES_REGISTRY_TOKEN }}
+          path: registry
+
+      - name: Install margo
+        run: |
+          cargo install margo --version "${MARGO_VERSION}" --locked \
+            --index sparse+https://integer32llc.github.io/margo/
+
+      - name: Publish, or confirm an identical retry
+        env:
+          VERSION: ${{ steps.pkg.outputs.version }}
+        run: |
+          archive="target/package/${PACKAGE}-${VERSION}.crate"
+          test -f "$archive"
+          archive_sha="$(sha256sum "$archive" | cut -d ' ' -f 1)"
+
+          lower="$(printf '%s' "$PACKAGE" | tr '[:upper:]' '[:lower:]')"
+          case "${#lower}" in
+            1) index_path="1/$lower" ;;
+            2) index_path="2/$lower" ;;
+            3) index_path="3/${lower:0:1}/$lower" ;;
+            *) index_path="${lower:0:2}/${lower:2:2}/$lower" ;;
+          esac
+
+          existing=""
+          if [ -f "registry/$index_path" ]; then
+            existing="$(jq -r --arg version "$VERSION" \
+              'select(.vers == $version) | .cksum' "registry/$index_path")"
+          fi
+
+          if [ -n "$existing" ]; then
+            if [ "$existing" != "$archive_sha" ]; then
+              echo "::error::${PACKAGE} ${VERSION} exists with different bytes — refusing."
+              exit 1
+            fi
+            echo "${PACKAGE} ${VERSION} already published, identical — retry is safe."
+            exit 0
+          fi
+
+          margo add --registry registry "$archive"
+
+          cd registry
+          git add -A
+          if git diff --cached --quiet; then
+            echo "::error::margo produced no registry change"
+            exit 1
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "publish ${PACKAGE} ${VERSION}"
+
+          branch="$(git rev-parse --abbrev-ref HEAD)"
+          for attempt in 1 2 3 4 5; do
+            if git push origin "$branch"; then exit 0; fi
+            echo "push rejected (attempt $attempt); rebasing on the registry head"
+            git fetch origin "$branch"
+            git rebase "origin/$branch" || {
+              echo "::error::rebase conflict in the registry — resolve by hand"
+              exit 1
+            }
+          done
+          echo "::error::could not push after 5 attempts"
+          exit 1

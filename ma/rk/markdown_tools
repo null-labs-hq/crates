@@ -1,0 +1,1 @@
+{"name":"markdown_tools","vers":"0.2.2","deps":[{"name":"unicode-width","req":"^0.2","features":[],"optional":false,"default_features":true,"kind":"normal","registry":"https://github.com/rust-lang/crates.io-index"}],"cksum":"4b7fceda8a781512fe7c7dcb0beab2c4dc064981e8042e3a437aff7e429367a0","features":{},"yanked":false,"v":2}

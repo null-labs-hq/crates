@@ -1,0 +1,7 @@
+version = "1"
+base_url = "https://null-labs-hq.github.io/crates/"
+auth_required = false
+
+[html]
+enabled = true
+suggested_registry_name = "null-labs-hq"
