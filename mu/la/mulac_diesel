@@ -1,0 +1,1 @@
+{"name":"mulac_diesel","vers":"0.4.0","deps":[{"name":"diesel","req":"^2","features":["postgres","r2d2","uuid","chrono","serde_json"],"optional":false,"default_features":true,"kind":"normal","registry":"https://github.com/rust-lang/crates.io-index"}],"cksum":"d0dd4e81aa4682e57a0aee015379f77ba129ee1f2ec007657d1aec1c38e58e92","features":{},"yanked":false,"v":2}
